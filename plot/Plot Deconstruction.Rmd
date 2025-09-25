@@ -1,0 +1,32 @@
+---
+title: "Plot Deconstruction"
+author: "Sumia Kabir Munia"
+date: "2025-09-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+# Read your dataset
+df <- read.csv("C:/Users/sumia/Downloads/benthic_series_from_image.csv")
+
+# Convert wide → long for plotting
+df_long <- df |>
+  pivot_longer(-Year, names_to = "Category", values_to = "Area_km2")
+
+# Simple faceted line plot
+ggplot(df_long, aes(Year, Area_km2)) +
+  geom_line(color = "steelblue") +
+  geom_point(color = "steelblue") +
+  facet_wrap(~Category, scales = "free_y") +
+  theme_minimal(base_size = 14) +
+  labs(title = "Benthic surface area by category (Heron Reef, 2002–2023)",
+       x = "Year", y = "Surface area (km²)")
+
+```
+
