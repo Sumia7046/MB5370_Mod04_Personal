@@ -2,14 +2,11 @@
 title: "QFISH"
 author: "Sumia Kabir Munia"
 date: "2025-09-19"
-output: html_document
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-
 
 ```{r}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
@@ -17,39 +14,31 @@ library(tidyverse)
 library(janitor)
 ```
 
-
 ```{r}
 data <- read.csv("C:/Users/sumia/OneDrive/Documents/MB5370/GitHub/MB5370_Mod04_Personal/data/export.csv")
-# Quick peek
 dim(data); data[1:5, 1:12]
 view(data)
 ```
-
+###----------Tidy Data------------###
 ```{r}
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
   library(stringr)
 })
-
-# 0) Treat your object as raw matrix with the first 2 rows as headers
-raw <- as.data.frame(data, stringsAsFactors = FALSE)
 ```
 
 ```{r}
-# ===== START HERE (works with your existing `data`) =====
-suppressPackageStartupMessages({
-  library(dplyr)
-  library(ggplot2)
-})
-
-# 0) Treat `data` as a raw table where:
-#    row 1 = Year headers, row 2 = Species headers, col 1 = Area, rows 3+ = data
+#    row 1 = Year headers, row 2 = Species headers, col 1 = Area, rows 3 = data
+# make everything character
 raw <- as.data.frame(data, stringsAsFactors = FALSE)
-raw[] <- lapply(raw, \(x) as.character(x))  # make everything character
+raw[] <- lapply(raw, \(x) as.character(x))  
+```
 
+```{r}
 # Helpers
-ffill <- function(x) {               # forward-fill year labels across row 1
+#Normalize species labels to the four groups we care about and drop totals/calendars
+ffill <- function(x) {               
   last <- NA_character_
   for (i in seq_along(x)) {
     if (!is.na(x[i]) && nzchar(x[i])) last <- x[i]
@@ -57,7 +46,7 @@ ffill <- function(x) {               # forward-fill year labels across row 1
   }
   x
 }
-norm_group <- function(g) {          # normalize species labels to 4 groups; drop totals/calendar
+norm_group <- function(g) {          
   g <- tolower(trimws(ifelse(is.null(g), "", g)))
   g <- gsub("[^a-z0-9]+", " ", g)
   g <- trimws(g)
@@ -68,15 +57,20 @@ norm_group <- function(g) {          # normalize species labels to 4 groups; dro
   if (g %in% c("other","others"))   return("Other")
   return(NA_character_)             # anything else = ignore
 }
+```
 
-# 1) Header rows & area vector
+```{r}
+## Header rows & area vector
 hdr_year  <- as.character(raw[1, ])
 hdr_group <- as.character(raw[2, ])
 area_vec  <- as.character(raw[-c(1,2), 1])
-
+# Forward-fill year row so every data column has a year
 yr_ff <- ffill(hdr_year)
+```
 
-# 2) Build tidy rows column-by-column (robust: no pivot_longer required)
+
+##--Build tidy rows column-by-column--##
+```{r}
 parts <- list()
 ncol_raw <- ncol(raw)
 for (j in 2:ncol_raw) {
@@ -95,57 +89,24 @@ for (j in 2:ncol_raw) {
     stringsAsFactors = FALSE
   )
 }
-
+##Bind and clean: remove blanks/NA areas, keep only our 4 groups, drop "grand total" rows
 tidy <- dplyr::bind_rows(parts)
 tidy <- subset(tidy, !is.na(Area) & Area != "" & !is.na(Year) & !is.na(Count))
 tidy <- subset(tidy, SpeciesGroup %in% c("Mammal","Shark","Turtle","Other"))
 tidy <- subset(tidy, !grepl("grand\\s*total", Area, ignore.case = TRUE))
 
-# Quick sanity check — you should see four groups with counts:
 print(dplyr::count(tidy, SpeciesGroup, sort = TRUE))
 
-# ===== PLOTS =====
 
-# A) SIMPLE, SPECIFIC: Statewide sharks by year (bar chart)
-p_sharks_statewide <- tidy |>
-  dplyr::filter(SpeciesGroup == "Shark") |>
-  dplyr::group_by(Year) |>
-  dplyr::summarise(Total = sum(Count, na.rm = TRUE), .groups = "drop") |>
-  ggplot(aes(x = Year, y = Total)) +
-  geom_col() +
-  labs(
-    title = "Total sharks caught statewide per year (Shark Control Program)",
-    x = "Year", y = "Number of sharks caught"
-  ) +
-  theme_minimal(base_size = 13)
-
-p_sharks_statewide  # <-- view this
-
-# B) (Optional) Very clear composition (all areas combined): 100% stacked
-# Uncomment to view
-# library(scales)
-# p_comp <- tidy |>
-#   dplyr::group_by(Year, SpeciesGroup) |>
-#   dplyr::summarise(Total = sum(Count, na.rm = TRUE), .groups = "drop") |>
-#   dplyr::group_by(Year) |>
-#   dplyr::mutate(Share = Total / sum(Total)) |>
-#   ggplot(aes(x = Year, y = Share, fill = SpeciesGroup)) +
-#   geom_col(width = 0.9) +
-#   scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-#   labs(title = "Catch composition by year (statewide, 100% stacked)",
-#        x = "Year", y = "Share of annual catch", fill = "Group") +
-#   theme_minimal(base_size = 13)
-# p_comp
-# ===== END =====
 ```
-
-`
+##-------PLOT-------##
+#Statewide trends for all four species groups 
 ```{r}
 p_species_trend <- tidy %>%
   group_by(Year, SpeciesGroup) %>%
   summarise(Total = sum(Count, na.rm = TRUE), .groups = "drop") %>%
   ggplot(aes(x = Year, y = Total, color = SpeciesGroup)) +
-  geom_line(linewidth = 1.2) +
+  geom_line(linewidth = 0.8) +
   geom_point(size = 2) +
   labs(
     title = "Total catches by species group across Queensland",
@@ -157,17 +118,36 @@ p_species_trend
 
 ```
 
+## Statewide sharks by year (bar chart)##
+```{r}
+p_sharks_statewide <- tidy |>
+  dplyr::filter(SpeciesGroup == "Shark") |>
+  dplyr::group_by(Year) |>
+  dplyr::summarise(Total = sum(Count, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = Year, y = Total, fill = factor(Year))) +
+  geom_col() +
+  scale_fill_viridis_d(option = "plasma") +   
+  labs(
+    title = "Total sharks caught statewide per year (Shark Control Program)",
+    x = "Year", y = "Number of sharks caught",
+    fill = "Year"
+  ) +
+  theme_minimal(base_size = 13)
+
+p_sharks_statewide
+
+
+```
 
 ##-------------Map-------------##
 ```{r}
 library(sf)
-library(dplyr)
-library(ggplot2)
 ```
+
 ```{r}
-# 1. read shapefile (point to the .shp file directly)
 lga <- st_read("C:/Users/sumia/OneDrive/Documents/MB5370/GitHub/MB5370_Mod04_Personal/data/1259030001_lga11aaust_shape/lga11aaust.shp")
 ```
+
 ```{r}
 names(lga)
 head(lga, 3)
@@ -176,60 +156,138 @@ head(lga, 3)
    
 ```{r}
 library(ggrepel)
-library(dplyr)
-library(sf)
 library(scales)
+```
 
-non_na <- map_data %>% filter(!is.na(TotalSharks))
+
+
+
+```{r}
+# --- Build the mapping data BEFORE plotting ---
+
+# 1) Keep only Queensland LGAs + name cleaner
+clean_area <- function(x){
+  x %>%
+    stringr::str_to_lower() %>%
+    stringr::str_replace_all("&"," and ") %>%
+    stringr::str_replace_all("\\(.*?\\)"," ") %>%
+    stringr::str_replace_all("regional|city|shire|council|lga"," ") %>%
+    stringr::str_replace_all("[^a-z0-9]+"," ") %>%
+    stringr::str_squish()
+}
+
+qld_lga <- lga %>%
+  dplyr::filter(STATE_CODE == 3) %>%
+  dplyr::select(LGA_NAME11, geometry) %>%
+  dplyr::mutate(LGA_clean = clean_area(LGA_NAME11))
+
+# 2) Shark totals across ALL years (use filter(Year == XXXX) if you need a single year)
+shark_totals <- tidy %>%
+  dplyr::filter(SpeciesGroup == "Shark") %>%
+  dplyr::group_by(Area) %>%
+  dplyr::summarise(TotalSharks = sum(Count, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(Area_clean = clean_area(Area))
+
+# 3) Join polygons + totals  (avoid the name 'map_data' to not clash with ggplot2)
+shp_join <- qld_lga %>%
+  dplyr::left_join(shark_totals, by = c("LGA_clean" = "Area_clean"))
+
+# 4) Quick checks (optional, but helpful)
+print(names(shp_join))
+print(head(shp_join %>% sf::st_drop_geometry() %>% dplyr::select(LGA_NAME11, TotalSharks)))
+
+
+non_na <- shp_join %>% dplyr::filter(!is.na(TotalSharks))
+bb     <- sf::st_bbox(qld_lga)
+
+# ... later in ggplot:
+geom_sf(data = non_na, aes(fill = TotalSharks), colour = "white", linewidth = 0.25)
+
+anti_join(shark_totals, qld_lga %>% dplyr::select(LGA_clean), 
+          by = c("Area_clean" = "LGA_clean")) %>% dplyr::distinct(Area)
+
+```
+
+```{r}
+# --- empty overrides so knit never fails ---
+
+if (!exists("overrides")) {
+  overrides <- tibble::tibble(Area = character(), LGA_clean = character())
+}
+
+```
+
+```{r}
+shark_totals <- shark_totals %>%
+  dplyr::left_join(overrides, by = "Area") %>%                 # safe now
+  dplyr::mutate(Area_clean = dplyr::coalesce(LGA_clean, Area_clean)) %>%
+  dplyr::select(-LGA_clean)
+
+```
+
+```{r}
+
+shark_totals <- shark_totals %>%
+  dplyr::left_join(overrides, by = "Area") %>%
+  dplyr::mutate(Area_clean = dplyr::coalesce(LGA_clean, Area_clean)) %>%
+  dplyr::select(-LGA_clean)
+
+shp_join <- qld_lga %>% dplyr::left_join(shark_totals, by = c("LGA_clean" = "Area_clean"))
+
+# sanity check (should show some non-NA numbers)
+shp_join %>% sf::st_drop_geometry() %>% dplyr::count(is.na(TotalSharks))
+head(shp_join %>% sf::st_drop_geometry() %>% dplyr::select(LGA_NAME11, TotalSharks))
+non_na <- shp_join %>% dplyr::filter(!is.na(TotalSharks))
+# --- label data (top N) ---
 TOP_N <- 8
-
-# --- Base labels ---
 labs0 <- non_na %>%
-  arrange(desc(TotalSharks)) %>%
-  slice_head(n = TOP_N) %>%
-  st_point_on_surface() %>%
-  mutate(
-    X = st_coordinates(geometry)[,1],
-    Y = st_coordinates(geometry)[,2],
-    label = paste0(LGA_NAME11, ": ", comma(TotalSharks))
-  ) %>% 
-  st_drop_geometry()
+  dplyr::arrange(dplyr::desc(TotalSharks)) %>%
+  dplyr::slice_head(n = TOP_N) %>%
+  sf::st_point_on_surface() %>%
+  dplyr::mutate(
+    X = sf::st_coordinates(geometry)[,1],
+    Y = sf::st_coordinates(geometry)[,2],
+    label = paste0(stringr::str_replace(LGA_NAME11, "\\s*\\(.*\\)", ""), ": ",
+                   scales::comma(TotalSharks))
+  ) %>% sf::st_drop_geometry()
 
-# --- Manual tweaks just for Bundaberg & Gold Coast ---
+# --- tiny manual nudges for the crowded coastal councils ---
+# dx, dy are in degrees (small numbers). 
 offsets <- tibble::tribble(
-  ~LGA_NAME11,   ~dx,   ~dy,
-  "Bundaberg (R)",  0.3,  -1.2,   # push east & up
-  "Gold Coast (C)", 0.3, -0.15    # push east & down
+  ~LGA_NAME11,        ~dx,   ~dy,
+  "Cairns (R)",        0.85,  0.00,
+  "Townsville (C)",    2.00,  0.40,
+  "Mackay (R)",        2.00,  0.60,
+  "Gladstone (R)",     2.50, -0.10,
+  "Bundaberg (R)",     0.55, -1.10,
+  "Gold Coast (C)",    0.80, -1
 )
 
 labs <- labs0 %>%
-  left_join(offsets, by = "LGA_NAME11") %>%
-  mutate(
-    dx = coalesce(dx, 0),
-    dy = coalesce(dy, 0),
+  dplyr::left_join(offsets, by = "LGA_NAME11") %>%
+  dplyr::mutate(
+    dx = dplyr::coalesce(dx, 0),
+    dy = dplyr::coalesce(dy, 0),
     Xlab = X + dx,
     Ylab = Y + dy
   )
-labs <- labs %>%
-  mutate(
-    label = paste0(str_replace(LGA_NAME11, "\\s*\\(.*\\)", ""), ": ", comma(TotalSharks))
-  )
 
-
-# --- Plot ---
-bb <- st_bbox(qld_lga)
-xpad <- (bb["xmax"] - bb["xmin"]) * 0.25
+# --- more horizontal space for off-coast labels ---
+bb   <- sf::st_bbox(qld_lga)
+xpad <- (bb["xmax"] - bb["xmin"]) * 0.45  
 
 p_map <- ggplot() +
-  geom_sf(data = qld_lga, fill = "grey85", colour = "white", linewidth = 0.2) +
+  geom_sf(data = qld_lga, fill = "grey85", colour = "white", linewidth = 0.3) +
   geom_sf(data = non_na, aes(fill = TotalSharks), colour = "white", linewidth = 0.25) +
   scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  geom_text_repel(
+  ggrepel::geom_text_repel(
     data = labs, aes(Xlab, Ylab, label = label),
-    size = 3, colour = "black", seed = 123,
-    nudge_x = 0.6, direction = "y",
-    box.padding = 0.3, point.padding = 0.3,
-    min.segment.length = 0, segment.size = 0.3, segment.alpha = 0.8
+    size = 2.5, colour = "black", seed = 123,
+    direction = "y",            
+    nudge_x = 0.4,             
+    box.padding = 0.0, point.padding = 0.3,
+    force = 6, force_pull = 0.6,
+    min.segment.length = 0, segment.size = 0.3, segment.alpha = 0.9
   ) +
   coord_sf(
     xlim = c(bb["xmin"], bb["xmax"] + xpad),
@@ -237,14 +295,22 @@ p_map <- ggplot() +
     expand = FALSE, datum = NA, clip = "off"
   ) +
   labs(title = "Shark Control Program — shark catches by LGA (Queensland)",
-       fill = "Total sharks") +
+       fill  = "Total sharks") +
   theme_minimal(base_size = 12) +
   theme(axis.text = element_blank(), axis.ticks = element_blank(), axis.title = element_blank())
 
-
 p_map
 
+shark_totals <- shark_totals %>%
+  dplyr::left_join(overrides, by = "Area") %>%
+  dplyr::mutate(Area_clean = dplyr::coalesce(LGA_clean, Area_clean)) %>%
+  dplyr::select(-LGA_clean)
+
+
 ```
+
+
+
 
 
 
