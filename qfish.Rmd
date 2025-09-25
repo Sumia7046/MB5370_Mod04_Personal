@@ -35,6 +35,7 @@ suppressPackageStartupMessages({
 # 0) Treat your object as raw matrix with the first 2 rows as headers
 raw <- as.data.frame(data, stringsAsFactors = FALSE)
 ```
+
 ```{r}
 # ===== START HERE (works with your existing `data`) =====
 suppressPackageStartupMessages({
@@ -171,376 +172,79 @@ lga <- st_read("C:/Users/sumia/OneDrive/Documents/MB5370/GitHub/MB5370_Mod04_Per
 names(lga)
 head(lga, 3)
 ```
+
+   
 ```{r}
-# --- packages ---
-suppressPackageStartupMessages({
-  library(sf)
-  library(dplyr)
-  library(stringr)
-  library(ggplot2)
-})
+library(ggrepel)
+library(dplyr)
+library(sf)
+library(scales)
 
-# 1) Filter Queensland from your loaded 'lga' (ASGC 2011 => QLD is STATE_CODE == 3)
-qld_lga <- lga %>% filter(STATE_CODE == 3) %>% select(LGA_NAME11, geometry)
+non_na <- map_data %>% filter(!is.na(TotalSharks))
+TOP_N <- 8
 
-# 2) Clean names on BOTH sides so they match more easily
-clean_area <- function(x){
-  x %>%
-    str_to_lower() %>%
-    str_replace_all("&", " and ") %>%
-    str_replace_all("\\(.*?\\)", " ") %>%            # drop (C), (R), etc.
-    str_replace_all("regional|city|shire|council|lga", " ") %>%
-    str_replace_all("[^a-z0-9]+", " ") %>%           # keep letters/digits
-    str_squish()
-}
+# --- Base labels ---
+labs0 <- non_na %>%
+  arrange(desc(TotalSharks)) %>%
+  slice_head(n = TOP_N) %>%
+  st_point_on_surface() %>%
+  mutate(
+    X = st_coordinates(geometry)[,1],
+    Y = st_coordinates(geometry)[,2],
+    label = paste0(LGA_NAME11, ": ", comma(TotalSharks))
+  ) %>% 
+  st_drop_geometry()
 
-qld_lga <- qld_lga %>%
-  mutate(LGA_clean = clean_area(LGA_NAME11))
-
-# 3) Aggregate sharks by Area (pick a single year OR totals across all years)
-#    (A) totals across all years:
-shark_area <- tidy %>%
-  filter(SpeciesGroup == "Shark") %>%
-  group_by(Area) %>%
-  summarise(TotalSharks = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-#    # (B) OR for a specific year, e.g. 2020:
-# target_year <- 2020
-# shark_area <- tidy %>%
-#   filter(SpeciesGroup == "Shark", Year == target_year) %>%
-#   group_by(Area) %>%
-#   summarise(TotalSharks = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-#   mutate(Area_clean = clean_area(Area))
-
-# 4) Optional manual overrides for common mismatches (add as you discover them)
-overrides <- tibble::tribble(
-  ~Area,              ~LGA_clean,
-  # "Bribie Island",     clean_area("Moreton Bay"),
-  # "Capricorn Coast",   clean_area("Rockhampton"),
-  # "Hervey Bay",        clean_area("Fraser Coast")
+# --- Manual tweaks just for Bundaberg & Gold Coast ---
+offsets <- tibble::tribble(
+  ~LGA_NAME11,   ~dx,   ~dy,
+  "Bundaberg (R)",  0.3,  -1.2,   # push east & up
+  "Gold Coast (C)", 0.3, -0.15    # push east & down
 )
-if (nrow(overrides) > 0) {
-  shark_area <- shark_area %>%
-    left_join(overrides, by = "Area") %>%
-    mutate(Area_clean = dplyr::coalesce(LGA_clean, Area_clean)) %>%
-    select(-LGA_clean)
-}
 
-# 5) Exact join using cleaned keys
-map_data <- qld_lga %>%
-  left_join(shark_area, by = c("LGA_clean" = "Area_clean"))
+labs <- labs0 %>%
+  left_join(offsets, by = "LGA_NAME11") %>%
+  mutate(
+    dx = coalesce(dx, 0),
+    dy = coalesce(dy, 0),
+    Xlab = X + dx,
+    Ylab = Y + dy
+  )
+labs <- labs %>%
+  mutate(
+    label = paste0(str_replace(LGA_NAME11, "\\s*\\(.*\\)", ""), ": ", comma(TotalSharks))
+  )
 
-# 6) Report any Areas that didn’t match (so you can add to overrides)
-unmatched <- shark_area %>%
-  filter(!Area_clean %in% qld_lga$LGA_clean) %>%
-  arrange(desc(TotalSharks))
-cat("\nUnmatched QFISH Areas (add to 'overrides' if needed):\n")
-print(unique(unmatched$Area))
 
-# 7) Plot: Shark totals by LGA (Queensland)
-p_map <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalSharks), colour = "white", linewidth = 0.2) +
+# --- Plot ---
+bb <- st_bbox(qld_lga)
+xpad <- (bb["xmax"] - bb["xmin"]) * 0.25
+
+p_map <- ggplot() +
+  geom_sf(data = qld_lga, fill = "grey85", colour = "white", linewidth = 0.2) +
+  geom_sf(data = non_na, aes(fill = TotalSharks), colour = "white", linewidth = 0.25) +
   scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  labs(
-    title = "Shark catches by Queensland LGA (QFISH Shark Control Program)",
-    fill  = "Total sharks"
+  geom_text_repel(
+    data = labs, aes(Xlab, Ylab, label = label),
+    size = 3, colour = "black", seed = 123,
+    nudge_x = 0.6, direction = "y",
+    box.padding = 0.3, point.padding = 0.3,
+    min.segment.length = 0, segment.size = 0.3, segment.alpha = 0.8
   ) +
-  theme_minimal(base_size = 12)
+  coord_sf(
+    xlim = c(bb["xmin"], bb["xmax"] + xpad),
+    ylim = c(bb["ymin"], bb["ymax"]),
+    expand = FALSE, datum = NA, clip = "off"
+  ) +
+  labs(title = "Shark Control Program — shark catches by LGA (Queensland)",
+       fill = "Total sharks") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), axis.title = element_blank())
+
 
 p_map
 
-# 8) (optional) Save for your e-portfolio
-# ggsave("qld_sharks_lga_map.png", p_map, width = 9, height = 7, dpi = 300)
-
 ```
 
-```{r}
-shark_area <- tidy %>%
-  group_by(Area) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
 
-map_data <- qld_lga %>%
-  left_join(shark_area, by = c("LGA_clean" = "Area_clean"))
-
-p_total <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  labs(
-    title = "Total SCP catches (all species) by Queensland LGA",
-    fill  = "Total catch"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.background = element_rect(fill = "gray95", colour = NA),  # light gray background
-    plot.background  = element_rect(fill = "gray95", colour = NA)
-  )
-
-p_total
-```
-
-```{r}
-all_species_area <- tidy %>%
-  group_by(Area, SpeciesGroup) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-map_data <- qld_lga %>%
-  left_join(all_species_area, by = c("LGA_clean" = "Area_clean"))
-
-p_facets <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.3) +
-  scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  labs(title = "SCP catches by Queensland LGA", fill = "Total catch") +
-  theme_minimal(base_size = 12) +
-  theme(panel.background = element_rect(fill = "gray95", colour = NA)) +
-  facet_wrap(~SpeciesGroup)
-
-p_facets
-
-```
-
-```{r}
-p_facets <- map_data %>%
-  filter(!is.na(SpeciesGroup)) %>%   # drop NA
-  ggplot(aes(fill = TotalCatch)) +
-  geom_sf(color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  labs(title = "SCP catches by Queensland LGA", fill = "Total catch") +
-  facet_wrap(~SpeciesGroup) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.background = element_rect(fill = "grey95", colour = NA),  # grey map base
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank()
-  )
-
-p_facets
-
-```
-
-```{r}
-library(dplyr)
-
-all_species_area <- tidy %>%
-  group_by(Area) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-map_data <- qld_lga %>%
-  left_join(all_species_area, by = c("LGA_clean" = "Area_clean"))
-
-library(ggplot2)
-
-
-# nice title to reuse
-ttl <- "SCP total catch by Queensland LGA (all species)"
-
-base_theme <- theme_minimal(base_size = 12) +
-  theme(
-    panel.background = element_rect(fill = "grey95", colour = NA), # grey map base
-    axis.text  = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank()
-  )
-
-# choose number of bins and (optional) fixed breaks if you prefer
-bins_n <- 7
-
-# LEFT: viridis (dark-purple -> yellow)
-p_left <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "viridis", n.breaks = bins_n, na.value = "grey90") +
-  labs(title = ttl, fill = "Total catch") +
-  base_theme
-
-# RIGHT: reversed viridis (yellow -> dark)
-p_right <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "viridis", direction = -1, n.breaks = bins_n, na.value = "grey90") +
-  labs(title = ttl, fill = "Total catch") +
-  base_theme
-
-p_left + p_right
-
-```
-```{r}
-by_group <- tidy %>%
-  group_by(Area, SpeciesGroup) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-map_by_group <- qld_lga %>%
-  left_join(by_group, by = c("LGA_clean" = "Area_clean")) %>%
-  filter(!is.na(SpeciesGroup))   # drop NA panel
-
-p_facets <- ggplot(map_by_group, aes(fill = TotalCatch)) +
-  geom_sf(colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "plasma", n.breaks = bins_n, na.value = "grey90") +
-  labs(title = "SCP catches by Queensland LGA", fill = "Total catch") +
-  facet_wrap(~ SpeciesGroup) +
-  base_theme
-
-p_facets
-
-```
-
-```{r}
-install.packages("patchwork")
-```
-```{r}
-# ===== COLOURED CHOROPLETH (ALL SPECIES) =====
-suppressPackageStartupMessages({
-  library(sf); library(dplyr); library(stringr); library(ggplot2); library(patchwork)
-})
-
-# 1) Keep Queensland LGAs and make a clean key for joining
-clean_area <- function(x){
-  x |>
-    str_to_lower() |>
-    str_replace_all("&", " and ") |>
-    str_replace_all("\\(.*?\\)", " ") |>
-    str_replace_all("regional|city|shire|council|lga", " ") |>
-    str_replace_all("[^a-z0-9]+", " ") |>
-    str_squish()
-}
-
-qld_lga <- lga %>%
-  filter(STATE_CODE == 3) %>%                 # ASGC 2011: QLD = 3
-  select(LGA_NAME11, geometry) %>%
-  mutate(LGA_clean = clean_area(LGA_NAME11))
-
-# 2) Total catch across all species per Area (or swap in a specific Year if you prefer)
-all_species_area <- tidy %>%
-  group_by(Area) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-# 3) Join polygons + totals
-map_data <- qld_lga %>% left_join(all_species_area, by = c("LGA_clean" = "Area_clean"))
-
-# quick sanity check
-print(sum(!is.na(map_data$TotalCatch)))  # should be > 0
-
-# 4) Two colour styles side-by-side (like your screenshot), grey background, no lat/long labels
-base_theme <- theme_minimal(base_size = 12) +
-  theme(
-    panel.background = element_rect(fill = "grey95", colour = NA),
-    plot.background  = element_rect(fill = "grey95", colour = NA),
-    axis.text  = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank()
-  )
-
-bins_n <- 7
-
-p_left <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "viridis", n.breaks = bins_n, na.value = "grey90") +
-  labs(title = "SCP total catch by Queensland LGA (all species)", fill = "Total catch") +
-  base_theme
-
-p_right <- ggplot(map_data) +
-  geom_sf(aes(fill = TotalCatch), colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "viridis", direction = -1, n.breaks = bins_n, na.value = "grey90") +
-  labs(title = "SCP total catch by Queensland LGA (all species)", fill = "Total catch") +
-  base_theme
-
-# SHOW the coloured maps
-p_left + p_right
-
-# 5) Save the image for your portfolio
-ggsave("qld_scp_totalcatch_two_styles.png", p_left + p_right, width = 11, height = 6, dpi = 300)
-
-```
-
-```{r}
-by_group <- tidy %>%
-  group_by(Area, SpeciesGroup) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-map_by_group <- qld_lga %>% left_join(by_group, by = c("LGA_clean" = "Area_clean"))
-
-p_facets <- map_by_group %>%
-  filter(!is.na(SpeciesGroup)) %>%     # drop NA panel
-  ggplot(aes(fill = TotalCatch)) +
-  geom_sf(colour = "white", linewidth = 0.25) +
-  scale_fill_viridis_b(option = "plasma", n.breaks = 7, na.value = "grey90") +
-  labs(title = "SCP catches by Queensland LGA", fill = "Total catch") +
-  facet_wrap(~ SpeciesGroup) +
-  base_theme
-
-p_facets
-ggsave("qld_scp_by_species_facets.png", p_facets, width = 10, height = 7, dpi = 300)
-
-```
-
-```{r}
-library(dplyr)
-library(ggplot2)
-library(sf)
-library(stringr)
-
-# 0) Make sure we have:
-#   - qld_lga: polygons for QLD (from your 2011 shapefile, STATE_CODE == 3)
-#   - tidy: Area, Year, SpeciesGroup, Count
-#   - a name cleaner (so join works)
-clean_area <- function(x){
-  x |>
-    str_to_lower() |>
-    str_replace_all("&", " and ") |>
-    str_replace_all("\\(.*?\\)", " ") |>
-    str_replace_all("regional|city|shire|council|lga", " ") |>
-    str_replace_all("[^a-z0-9]+", " ") |>
-    str_squish()
-}
-
-qld_lga <- qld_lga %>%
-  mutate(LGA_clean = clean_area(LGA_NAME11))
-
-# 1) Totals by species + cleaned key
-by_group <- tidy %>%
-  group_by(Area, SpeciesGroup) %>%
-  summarise(TotalCatch = sum(Count, na.rm = TRUE), .groups = "drop") %>%
-  mutate(Area_clean = clean_area(Area))
-
-# 2) Join polygons (many rows may be NA if names don't match exactly)
-map_by_group <- qld_lga %>% left_join(by_group, by = c("LGA_clean" = "Area_clean"))
-
-# 3) Plot with a GREY BASEMAP and coloured overlay; remove NA facet; hide axes
-#    (basemap is drawn in EVERY facet so you always see the whole state)
-bbox <- sf::st_bbox(qld_lga)
-
-base_theme <- theme_minimal(base_size = 12) +
-  theme(
-    panel.background = element_rect(fill = "grey95", colour = NA),
-    plot.background  = element_rect(fill = "grey95", colour = NA),
-    axis.text  = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank()
-  )
-
-p_facets <- ggplot() +
-  # basemap first (light grey) – shows all LGAs even where data is NA
-  geom_sf(data = qld_lga, fill = "grey85", colour = "white", linewidth = 0.2) +
-  # coloured overlay only where we have totals
-  geom_sf(
-    data = dplyr::filter(map_by_group, !is.na(SpeciesGroup), !is.na(TotalCatch)),
-    aes(fill = TotalCatch),
-    colour = "white", linewidth = 0.2
-  ) +
-  scale_fill_viridis_b(option = "plasma", n.breaks = 7, na.value = "grey90") +
-  facet_wrap(~ SpeciesGroup) +
-  coord_sf(xlim = c(bbox["xmin"], bbox["xmax"]),
-           ylim = c(bbox["ymin"], bbox["ymax"]),
-           expand = FALSE, datum = NA) +
-  labs(title = "SCP catches by Queensland LGA", fill = "Total catch") +
-  base_theme
-
-p_facets
-
-```
 
