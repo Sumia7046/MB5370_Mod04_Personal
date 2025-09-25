@@ -1,6 +1,6 @@
 ---
 title: "Plot Deconstruction"
-author: "Sumia Kabir Munia"
+author: "Sumia Kabir Munia & Udita Jahan"
 date: "2025-09-25"
 output: html_document
 ---
@@ -12,13 +12,20 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 
-# Read your dataset
 df <- read.csv("C:/Users/sumia/Downloads/benthic_series_from_image.csv")
+```
 
-# Convert wide → long for plotting
+
+##---Pivoting Longer---##
+# pivoting can help reshape our data
+```{r}
 df_long <- df |>
   pivot_longer(-Year, names_to = "Category", values_to = "Area_km2")
+```
 
+
+##---Plot---##
+```{r}
 # Simple faceted line plot
 ggplot(df_long, aes(Year, Area_km2)) +
   geom_line(color = "steelblue") +
