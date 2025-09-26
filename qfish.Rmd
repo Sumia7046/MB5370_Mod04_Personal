@@ -3,9 +3,9 @@ title: "QFISH"
 author: "Sumia Kabir Munia"
 date: "2025-09-19"
 output:
-  html_document: default
   word_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r}
